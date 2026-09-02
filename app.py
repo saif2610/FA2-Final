@@ -5,7 +5,15 @@ from ultralytics import YOLO
 
 st.set_page_config(page_title="SafeFall AI", page_icon="🚨", layout="wide")
 
-pose_model = YOLO("yolov8n-pose.pt")
+from ultralytics import YOLO
+import os
+
+MODEL_PATH = "model/yolov8n-pose.pt"
+
+if not os.path.exists(MODEL_PATH):
+    YOLO("yolov8n-pose.pt").save(MODEL_PATH)
+
+pose_model = YOLO(MODEL_PATH)
 classifier = tf.keras.models.load_model("model/activity_classifier.keras")
 scaler = joblib.load("model/scaler.pkl")
 encoder = joblib.load("model/label_encoder.pkl")
