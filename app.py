@@ -4,148 +4,130 @@ import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
-import tensorflow as tf
 from ultralytics import YOLO
 
-# -------------------------------------------------
-# Streamlit Page
-# -------------------------------------------------
+# -------------------- Page Config --------------------
 st.set_page_config(
     page_title="🚨 SafeFall AI",
     page_icon="🚨",
     layout="wide"
 )
 
-st.title("🚨 SafeFall AI - Elderly Fall Detection System")
-st.caption("YOLOv8 Pose + Deep Learning Activity Classification")
+st.title("🚨 SafeFall AI - Elderly Fall Detection")
+st.markdown("YOLOv8 Pose Estimation + Activity Classification")
 
-# -------------------------------------------------
-# Load YOLO Pose Model
-# -------------------------------------------------
+# -------------------- Load Models --------------------
 MODEL_PATH = "model/yolov8n-pose.pt"
 
 @st.cache_resource
-def load_pose_model():
-    if os.path.exists(MODEL_PATH):
-        return YOLO(MODEL_PATH)
-    else:
-        st.warning("YOLO pose model not found. Downloading once...")
-        return YOLO("yolov8n-pose.pt")
+def load_models():
+    pose = YOLO(MODEL_PATH if os.path.exists(MODEL_PATH) else "yolov8n-pose.pt")
 
-pose_model = load_pose_model()
-
-# -------------------------------------------------
-# Load Trained AI Classifier
-# -------------------------------------------------
-@st.cache_resource
-def load_classifier():
-    classifier = tf.keras.models.load_model("model/activity_classifier.keras")
+    classifier = joblib.load("model/activity_classifier.pkl")
     scaler = joblib.load("model/scaler.pkl")
     encoder = joblib.load("model/label_encoder.pkl")
-    return classifier, scaler, encoder
+
+    return pose, classifier, scaler, encoder
 
 try:
-    classifier, scaler, encoder = load_classifier()
-except Exception:
-    st.error("❌ Trained model files are missing.")
+    pose_model, classifier, scaler, encoder = load_models()
+except Exception as e:
+    st.error("❌ Model files are missing.")
+    st.code(str(e))
     st.info("""
-Create a **model** folder containing:
+Create this folder inside your GitHub repo:
 
-- activity_classifier.keras
-- scaler.pkl
-- label_encoder.pkl
-- yolov8n-pose.pt
+model/
+├── yolov8n-pose.pt
+├── activity_classifier.pkl
+├── scaler.pkl
+└── label_encoder.pkl
 """)
     st.stop()
 
-# -------------------------------------------------
-# Prediction Function
-# -------------------------------------------------
+# -------------------- Prediction Function --------------------
 def predict_frame(frame):
     results = pose_model(frame, verbose=False)
 
     annotated = results[0].plot()
 
     if results[0].keypoints is None or results[0].keypoints.xy is None:
-        return annotated, "No Person", 0
+        return annotated, "No Person", 0.0
 
-    keypoints = results[0].keypoints.xy
+    if len(results[0].keypoints.xy) == 0:
+        return annotated, "No Person", 0.0
 
-    if len(keypoints) == 0:
-        return annotated, "No Person", 0
+    keypoints = results[0].keypoints.xy[0].cpu().numpy().flatten()
 
-    features = keypoints[0].cpu().numpy().flatten()
+    features = scaler.transform([keypoints])
 
-    features = scaler.transform([features])
+    probs = classifier.predict_proba(features)[0]
+    idx = np.argmax(probs)
 
-    prediction = classifier.predict(features, verbose=False)[0]
-
-    label = encoder.inverse_transform([np.argmax(prediction)])[0]
-    confidence = float(np.max(prediction))
+    label = encoder.inverse_transform([idx])[0]
+    confidence = float(probs[idx])
 
     return annotated, label, confidence
 
-# -------------------------------------------------
-# Sidebar
-# -------------------------------------------------
-st.sidebar.header("📂 Detection Mode")
-
+# -------------------- Sidebar --------------------
 mode = st.sidebar.radio(
-    "Choose Input",
+    "Choose Detection Mode",
     ["🖼️ Image Detection", "🎥 Video Detection"]
 )
 
-# -------------------------------------------------
+# ==========================================================
 # IMAGE DETECTION
-# -------------------------------------------------
+# ==========================================================
 if mode == "🖼️ Image Detection":
 
-    uploaded_image = st.file_uploader(
-        "Upload an Image",
+    image = st.file_uploader(
+        "Upload Image",
         type=["jpg", "jpeg", "png"]
     )
 
-    if uploaded_image:
+    if image:
 
-        image_bytes = np.frombuffer(uploaded_image.read(), np.uint8)
-        frame = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+        img = cv2.imdecode(
+            np.frombuffer(image.read(), np.uint8),
+            cv2.IMREAD_COLOR
+        )
 
-        output, label, confidence = predict_frame(frame)
+        output, label, confidence = predict_frame(img)
 
         st.image(
             cv2.cvtColor(output, cv2.COLOR_BGR2RGB),
             use_container_width=True
         )
 
-        col1, col2 = st.columns(2)
+        c1, c2 = st.columns(2)
 
-        col1.metric("Activity", label.title())
-        col2.metric("Confidence", f"{confidence:.2%}")
+        c1.metric("Detected Activity", label.title())
+        c2.metric("Confidence", f"{confidence:.2%}")
 
         if label.lower() == "fall" and confidence > 0.60:
-            st.error("🚨 FALL DETECTED — Notify Caregiver Immediately!")
+            st.error("🚨 EMERGENCY FALL DETECTED!")
+            st.warning("Notify Caregiver Immediately.")
         else:
-            st.success("✅ Normal Activity Detected")
+            st.success("✅ Normal Activity")
 
-# -------------------------------------------------
+# ==========================================================
 # VIDEO DETECTION
-# -------------------------------------------------
+# ==========================================================
 if mode == "🎥 Video Detection":
 
-    uploaded_video = st.file_uploader(
-        "Upload a Video",
+    video = st.file_uploader(
+        "Upload Video",
         type=["mp4", "avi", "mov"]
     )
 
-    if uploaded_video:
+    if video:
 
         with open("temp_video.mp4", "wb") as f:
-            f.write(uploaded_video.read())
+            f.write(video.read())
 
         cap = cv2.VideoCapture("temp_video.mp4")
 
-        frame_placeholder = st.empty()
-
+        frame_box = st.empty()
         activities = []
 
         while cap.isOpened():
@@ -161,24 +143,24 @@ if mode == "🎥 Video Detection":
 
             cv2.putText(
                 output,
-                f"{label.upper()} ({confidence:.2%})",
+                f"{label.upper()}  {confidence:.2%}",
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1,
+                0.9,
                 (0, 255, 0),
                 2
             )
 
-            frame_placeholder.image(
+            frame_box.image(
                 cv2.cvtColor(output, cv2.COLOR_BGR2RGB),
                 use_container_width=True
             )
 
         cap.release()
 
-        st.success("🎉 Video Analysis Completed")
+        st.success("🎉 Video Analysis Completed!")
 
-        st.subheader("📊 Activity Analytics")
+        st.subheader("📊 Activity Summary")
 
         counts = pd.Series(activities).value_counts()
 
@@ -186,10 +168,10 @@ if mode == "🎥 Video Detection":
 
         col1, col2 = st.columns(2)
 
-        col1.metric("Total Frames Analysed", len(activities))
+        col1.metric("Frames Analysed", len(activities))
         col2.metric("Fall Frames", activities.count("fall"))
 
         if activities.count("fall") > 0:
-            st.error("🚨 Emergency Alert: Fall detected in uploaded video.")
+            st.error("🚨 Fall Detected in Video")
         else:
-            st.success("✅ No fall detected.")
+            st.success("✅ No Fall Detected")
