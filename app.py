@@ -6,6 +6,16 @@ import pandas as pd
 import streamlit as st
 from ultralytics import YOLO
 
+import streamlit as st
+
+try:
+    import cv2
+    st.success(f"OpenCV Loaded: {cv2.__version__}")
+except Exception as e:
+    st.error(e)
+    st.stop()
+
+
 # -------------------- Page Config --------------------
 st.set_page_config(
     page_title="🚨 SafeFall AI",
