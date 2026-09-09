@@ -1,15 +1,9 @@
 import streamlit as st
 
-try:
-    import cv2
-    st.success(f"OpenCV Loaded: {cv2.__version__}")
-except Exception as e:
-    st.error(e)
-    st.stop()
+st.write("App started")
 
-
-
-
+import cv2
+st.write(cv2.__version__)
 
 import os
 import cv2
